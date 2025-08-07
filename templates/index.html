@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>FBref Chatbot</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f8f9fa;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .chat-container {
+            max-width: 700px;
+            margin: auto;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        .chat-box {
+            max-height: 400px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            padding-right: 10px;
+        }
+
+        .message {
+            margin-bottom: 15px;
+        }
+
+        .user {
+            font-weight: bold;
+            color: #007bff;
+        }
+
+        .bot {
+            color: #343a40;
+        }
+
+        form {
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <h2>FBref Chatbot</h2>
+        
+        <div class="chat-box" id="chat-box">
+            {% for message in chat_history %}
+                {% if message.type == 'human' %}
+                    <div class="message user">
+                        <div class="sender">You:</div>
+                        <div class="content">{{ message.content }}</div>
+                    </div>
+                {% elif message.type == 'ai' %}
+                    <div class="message bot">
+                        <div class="sender">Bot:</div>
+                        <div class="content">{{ message.content }}</div>
+                    </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+
+        <form method="POST" action="/ask">
+            <input type="text" name="question" placeholder="Ask a question..." required autofocus>
+            <button type="submit">Send</button>
+        </form>
+    </div>
+
+    <script>
+        window.onload = function() {
+            var chatBox = document.getElementById("chat-box");
+            chatBox.scrollTop = chatBox.scrollHeight;
+        };
+    </script>
+    
+</body>
+</html>
