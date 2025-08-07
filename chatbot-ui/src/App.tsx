@@ -1,17 +1,26 @@
 // src/App.tsx
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
 
 function App() {
   const [question, setQuestion] = useState('');
   const [chatHistory, setChatHistory] = useState<{ type: string; content: string }[]>([]);
   const [loading, setLoading] = useState(false);
+  const chatWindowRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to the bottom of the chat window
+  useEffect(() => {
+    if (chatWindowRef.current) {
+      chatWindowRef.current.scrollTop = chatWindowRef.current.scrollHeight;
+    }
+  }, [chatHistory]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!question.trim()) return;
+
     setLoading(true);
 
-    // Save the user's question to display immediately
     const userMessage = { type: 'human', content: question };
     setChatHistory(prevHistory => [...prevHistory, userMessage]);
 
@@ -32,11 +41,7 @@ function App() {
       }
 
       const data = await response.json();
-
-      // Update the state with the bot's response, keeping previous messages
       setChatHistory(data.chat_history);
-
-      // Clear the input field
       setQuestion('');
 
     } catch (error) {
@@ -48,27 +53,27 @@ function App() {
   };
 
   return (
-    <div style={{ maxWidth: 600, margin: '2rem auto', padding: '1rem' }}>
-      <h1>FBref Chatbot</h1>
-
-      <div style={{ marginBottom: '1rem' }}>
+    <div className="chat-container">
+      <div className="chat-header">
+        <h1>FBref Chatbot</h1>
+      </div>
+      <div className="chat-window" ref={chatWindowRef}>
         {chatHistory.map((msg, idx) => (
-          <div key={idx} style={{ marginBottom: '0.5rem' }}>
-            <strong>{msg.type === 'human' ? 'You' : 'Bot'}:</strong> {msg.content}
+          <div key={idx} className={`chat-message ${msg.type}`}>
+            {msg.content}
           </div>
         ))}
+        {loading && <div className="loading-indicator">Thinking...</div>}
       </div>
-
-      <form onSubmit={handleSubmit}>
+      <form className="chat-input-area" onSubmit={handleSubmit}>
         <input
           type="text"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          placeholder="Ask something..."
-          style={{ width: '80%', padding: '0.5rem' }}
+          placeholder="Ask a question about soccer data..."
         />
-        <button type="submit" disabled={loading} style={{ padding: '0.5rem', marginLeft: '0.5rem' }}>
-          {loading ? 'Asking...' : 'Ask'}
+        <button type="submit" disabled={loading}>
+          {loading ? '...' : 'Ask'}
         </button>
       </form>
     </div>

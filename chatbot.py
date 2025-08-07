@@ -17,7 +17,6 @@ from langchain.memory import ChatMessageHistory
 import uuid
 from flask_cors import CORS
 
-
 def get_session_history(session_id: str):
     # Get the list of message dictionaries from the session
     history_dicts = session.get("history", [])
@@ -191,3 +190,4 @@ def ask():
 
 if __name__ == '__main__':
     app.run(debug=True)
+    
