@@ -6,19 +6,28 @@ from selenium.webdriver.chrome.service import Service
 import time
 import pandas as pd
 
+# Mapping of league names to their FBref competition ID
+LEAGUE_ID_MAP = {
+    "Premier-League": "9",
+    "La-Liga": "12",
+    "Serie-A": "11",
+    "Bundesliga": "20",
+    "Ligue-1": "13"
+}
+
 # create a configuration dictionary to determine the stat type
 STAT_CONFIG = {
     'standard': {
-        'url_template': 'https://fbref.com/en/comps/9/{season}/stats/{season}-{competition}-Stats',
+        'url_template': 'https://fbref.com/en/comps/{competition_id}/{season}/stats/{season}-{competition}-Stats',
         'div_id': 'div_stats_standard',
         'columns': [
             'name', 'nation', 'position', 'team', 'age', 'year_born', 'matches', 'starts', 'minutes', 'full_games',
             'goals', 'assists', 'G+A', 'non-PK_goals', 'PK_goals', 'PK_att', 'yellow_cards', 'red_cards',
-            'xG', 'xG_nonpenalty', 'xGA', 'xGnp+xGA', 'progressive_carries', 'progressive_passes'
+            'expected_goals(xG)', 'xG_nonpenalty', 'xGA', 'xGnp+xGA', 'progressive_carries', 'progressive_passes'
         ]
     },
     'keeper': {
-        'url_template': 'https://fbref.com/en/comps/9/{season}/keepers/{season}-{competition}-Stats',
+        'url_template': 'https://fbref.com/en/comps/{competition_id}/{season}/keepers/{season}-{competition}-Stats',
         'div_id': 'all_stats_keeper',
         'columns': [
             'name', 'nation', 'position', 'team', 'age', 'year_born', 'matches', 'starts', 'minutes', 'full_games',
@@ -28,7 +37,7 @@ STAT_CONFIG = {
         ]
     },
     'defensive': {
-        'url_template': 'https://fbref.com/en/comps/9/{season}/defense/{season}-{competition}-Stats',
+        'url_template': 'https://fbref.com/en/comps/{competition_id}/{season}/defense/{season}-{competition}-Stats',
         'div_id': 'all_stats_defense',
         'columns': [
             'name', 'nation', 'position', 'team', 'age', 'year_born', 'full_games', 'tackles', 'tackles_won',
@@ -36,12 +45,48 @@ STAT_CONFIG = {
             'challenges_lost', 'blocks', 'shots_blocked', 'passes_blocked', 'interceptions',
             None, 'clearances', 'error_shot'
         ]
+    },
+    'shooting': {
+    'url_template': 'https://fbref.com/en/comps/{competition_id}/{season}/shooting/{season}-{competition}-Stats',
+    'div_id': 'all_stats_shooting',
+    'columns': [
+        'name', 'nation', 'position', 'team', 'age', 'year_born', 'full_games', 'goals', 'shots',
+        'shots_on_target', 'shots_on_target_percentage', 'shots_per_90', 'goals_per_shot', 'goals_per_shot_on_target',
+        'average_shot_distance', 'shots_from_free_kicks', 'PK_goals', 'PK_att', 'xG', 'xG_nonpenalty',
+        'xG_nonpenalty_per_shot', 'goals-xG', 'nonpenalty_goals-xG_nonpenalty'
+    ]
+    },
+    'passing': {
+    'url_template': 'https://fbref.com/en/comps/{competition_id}/{season}/passing/{season}-{competition}-Stats',
+    'div_id': 'all_stats_passing',
+    'columns': [
+        'name', 'nation', 'position', 'team', 'age', 'year_born', 'full_games', 'completed_passes', 'pass_attempts',
+        'pass_completion_percentage', 'passing_distance', 'progressive_passes_distance', 'short_pass_completed', 
+        'short_pass_attempts','short_pass_completion_percentage', 'medium_pass_completed', 
+        'medium_pass_attempts', 'medium_pass_completion_percentage', 'long_pass_completed', 'long_pass_attempts',
+        'long_pass_completion_percentage', 'assists', None, 'expected_assists(xA)', None, 'key_passes', 'passes_into_final_third',
+        'passes_into_penalty_area', 'crosses_into_penalty_area', 'progressive_passes'
+    ]
+    },
+    'possession': {
+    'url_template': 'https://fbref.com/en/comps/{competition_id}/{season}/possession/{season}-{competition}-Stats',
+    'div_id': 'all_stats_possession',
+    'columns': [
+        'name', 'nation', 'position', 'team', 'age', 'year_born', 'full_games', 'touches', 'touches_defensive_pen_area',
+        'touches_defensive_third', 'touches_mid_third', 'touches_attacking_third', 'touches_attacking_pen_area', 
+        'live_ball_touches','take_on_attempts', 'successful_take_on', 'take_on_percentage', 'tackled_during_take_on', 
+        None, 'ball_carries', 'total_carry_distance', 'progressive_carry_distance', 'progressive_carries', 'carries_into_final_third',
+        'carries_into_penalty_area', 'miscontrols', 'dispossessed', 'passes_recieved', 'progressive_passes_recieved'
+    ]
     }
 }
 
-def scrape_fbref(stat_type='standard', season='2024/2025', competition='Premier League'):
+
+def scrape_fbref(stat_type='standard', season='2024-2025', competition='Premier-League'):
     config = STAT_CONFIG[stat_type]
-    url = config['url_template'].format(season=season, competition=competition)
+    competition_id = LEAGUE_ID_MAP.get(competition)
+    url = config['url_template'].format(season=season, competition=competition, competition_id=competition_id)
+    print(url)
     div_id = config['div_id']
     columns = config['columns']
 
@@ -91,9 +136,10 @@ def scrape_fbref(stat_type='standard', season='2024/2025', competition='Premier 
     return df.to_string(index=False)
 
 
-def scrape_fbref_df(stat_type='standard', season='2024/2025', competition='Premier League'):
+def scrape_fbref_df(stat_type='standard', season='2024-2025', competition='Premier-League'):
     config = STAT_CONFIG[stat_type]
-    url = config['url_template'].format(season=season, competition=competition)
+    competition_id = LEAGUE_ID_MAP.get(competition)
+    url = config['url_template'].format(season=season, competition=competition, competition_id=competition_id)
     div_id = config['div_id']
     columns = config['columns']
 
@@ -143,8 +189,9 @@ def scrape_fbref_df(stat_type='standard', season='2024/2025', competition='Premi
     df = pd.DataFrame(players_info)
     return df
 
-# df_keeper = scrape_fbref('keeper', '2024/2025', 'Premier League')
-
+df_possession = scrape_fbref_df('possession', '2024-2025', 'La-Liga')
+# print(df_possession)
+# df_possession.to_csv('Prem player_possession_stats.csv', index=False)
 
 
 

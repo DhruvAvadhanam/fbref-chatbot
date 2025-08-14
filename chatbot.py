@@ -36,7 +36,6 @@ def get_session_history(session_id: str):
     return ChatMessageHistory(messages=messages)
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True, origins=["http://localhost:3000"])
 
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "default_secret")
 
@@ -45,8 +44,9 @@ load_dotenv()
 # Define the prompt template
 template = """
 You are a helpful AI assistant who is knowledgeable about professional soccer.
+Please format your responses using Markdown notation to make them as easily readable as possible.
+Always put a blank line before starting a numbered or bulleted list in Markdown.
 Answer the user's question based on the provided tabular data context.
-Please do not include any asterisks in the reponse.
 The current season is 2024/2025.
 You are allowed to give subjective opinions, as long as they are backed up by statistics.
 If asked a subjective question, use relevant data from the context to back up your claims as best as you can.
@@ -67,7 +67,7 @@ Answer:
 
 # Create PromptTemplate instance
 prompt = PromptTemplate(
-    input_variables=["context", "question"],
+    input_variables=["context", "question", "chat_history"],
     template=template,
 )
 
@@ -79,17 +79,13 @@ tools = [scrape_fbref]
 
 prompt_scrape = ChatPromptTemplate.from_messages([
     ("system", "You are a helpful assistant who can scrape soccer data from FBref by calling functions."
-    "The stat_type can be one of three categories: standard, keeper, defensive"
-    "Use your judgement to pick the best category."
-    "When gathering the competition, it must follow the rule that any spaces between words will contain a dash."
-    "Here is an example: Premier-League"
+    "Please format your responses using Markdown notation to make them as easily readable as possible."
+    "The stat_type can be one of six categories: standard, keeper, defensive, shooting, passing, possession. Use your judgement to pick the best category."
+    "When gathering the competition, it must follow the rule that any spaces between words will contain a dash. Here is an example: Premier-League"
     "When gathering the season, it must follow the format XXXX-XXXX. Here is an example: 2024-2025."
     "The current season is 2024/2025."
-    "Please also answer subjective questions."
-    "Please do not include any asterisks in the reponse."
-    "If any information for a tool call, like competition, season, or stat_type, is missing from the current question, use the **Chat History** to find the correct information. Do not ask for it again if it has already been provided."
-    "You are allowed to give subjective opinions, as long as they are backed up by statistics."
-    "If asked a subjective question, use relevant data from the context to back up your claims as best as you can."
+    "Please also answer subjective questions. If asked a subjective question, use relevant data from the context to back up your claims as best as you can."
+    # "If any information for a tool call, like competition, season, or stat_type, is missing from the current question, use the **Chat History** to find the correct information. Do not ask for it again if it has already been provided."
     "If anything is missing or ambiguous, ask a specific, conversational follow-up question to clarify."
     "Only ask for what's missing. Do not repeat previous info you have already mentioned."
     "For questions on specific players, only include information relevant to the player and the question asked"),
@@ -113,9 +109,18 @@ chat_with_memory = RunnableWithMessageHistory(
 def home():
     return render_template("index.html")
 
+@app.route("/clear_history", methods=["POST"])
+def clear_history():
+    # Remove the 'history' and 'session_id' keys from the session
+    session.pop("history", None)
+    session.pop("session_id", None)
+    
+    # Response to confirm success
+    return jsonify({"message": "Chat history cleared successfully"})
 
-@app.route("/ask", methods=["POST"])
-def ask():
+
+@app.route("/chat", methods=["POST"])
+def chat():
 
     if "session_id" not in session:
         session["session_id"] = str(uuid.uuid4())
@@ -123,22 +128,20 @@ def ask():
 
     # get the question from the input box
     data = request.get_json()
-    user_question = data.get("question")
+    user_question = data.get("message")
     print('User Question: ', user_question)
 
-    # Get the history and add the current human message
-    # history = get_session_history(session_id)
-    # history.add_user_message(user_question)
+    # Get the full history of the session
+    full_history = get_session_history(session_id)
+    # Add the user's message
+    full_history.add_user_message(user_question)
 
-     # The chain returns an AIMessage object
+    # The chain returns an AIMessage object
     ai_message = chat_with_memory.invoke(
         {"question": user_question},
         config={"configurable": {"session_id": session_id}}
     )
     print('AI Tool Call: ', ai_message)
-
-    # final history to be sent to frontend
-    chat_history_for_frontend = []
 
     # Case 1: The model calls scraper
     if ai_message.tool_calls:
@@ -152,42 +155,29 @@ def ask():
         df = scrape_fbref_df(stat_type=stat_type, season=season, competition=competition)
         context_text = df.to_string(index=False)
 
-        # get the updated history with the question just added
-        full_history = get_session_history(session_id)
-        print('Full History: ', full_history)
-
         # Get the full chat history messages for the prompt
         chat_history_for_llm_chain = [f"{msg.type}: {msg.content}" for msg in full_history.messages]
-        print('Chat History: ', chat_history_for_llm_chain)
         chat_history_string = "\n".join(chat_history_for_llm_chain)
         print('Chat History: ', chat_history_string)
 
         # Get the final answer
         answer = llm_chain.invoke({"context": context_text, "question": user_question, "chat_history": chat_history_string})["text"]
         print('Response: ', answer)
+
+        full_history.add_ai_message(answer)
+    else:
+        answer = ai_message.content
         full_history.add_ai_message(answer)
 
-        # save the updated history
-        serializable_history = messages_to_dict(full_history.messages)
-        session["history"] = serializable_history
-    
-    final_history = get_session_history(session_id)
-    serializable_final_history = messages_to_dict(final_history.messages)
+    # save the updated history
+    serializable_history = messages_to_dict(full_history.messages)
+    session["history"] = serializable_history
 
-    if not ai_message.tool_calls:
-        session["history"] = serializable_final_history
-    
-    for message in serializable_final_history:
-        chat_history_for_frontend.append({
-            "type": message["type"],
-            "content": message["data"]["content"]
-        })
             
     return jsonify({
-        "chat_history": chat_history_for_frontend
+        "reply": answer
     })
 
 
 if __name__ == '__main__':
     app.run(debug=True)
-    

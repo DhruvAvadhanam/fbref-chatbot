@@ -2,104 +2,262 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>FBref Chatbot</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fbref Chatbot</title>
+    <!-- load the font -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- load markdown for responses -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- single newlines in Markdown become br tags -->
+    <script>
+    marked.setOptions({
+        breaks: true
+    });
+    </script>
+
     <style>
         body {
-            font-family: Arial, sans-serif;
-            background: #f8f9fa;
-            margin: 0;
-            padding: 20px;
+            font-family: 'Inter', sans-serif;
+            background-color: #f0fdf4; /* A light, fresh green-white */
+            color: #166534; /* Dark green text for contrast */
+        }
+        /* Custom scrollbar styling for the chat messages container */
+        .chat-messages-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        .chat-messages-container::-webkit-scrollbar-track {
+            background: #ebfaf0; /* Lighter green-white */
+            border-radius: 10px;
+        }
+        .chat-messages-container::-webkit-scrollbar-thumb {
+            background: #4ade80; /* A shade of green */
+            border-radius: 10px;
+        }
+        .chat-messages-container::-webkit-scrollbar-thumb:hover {
+            background: #22c55e; /* A slightly darker green */
+        }
+        .ai-message pre {
+        background-color: #f3f4f6; /* light gray */
+        padding: 8px;
+        border-radius: 6px;
+        white-space: pre-wrap; /* preserve line breaks in code */
+        word-break: break-word;
         }
 
-        .chat-container {
-            max-width: 700px;
-            margin: auto;
-            background: white;
-            padding: 20px;
-            border-radius: 12px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-
-        .chat-box {
-            max-height: 400px;
-            overflow-y: auto;
-            margin-bottom: 20px;
-            padding-right: 10px;
-        }
-
-        .message {
-            margin-bottom: 15px;
-        }
-
-        .user {
-            font-weight: bold;
-            color: #007bff;
-        }
-
-        .bot {
-            color: #343a40;
-        }
-
-        form {
-            display: flex;
-            gap: 10px;
-        }
-
-        input[type="text"] {
-            flex: 1;
-            padding: 10px;
-            border: 1px solid #ced4da;
-            border-radius: 6px;
-            font-size: 16px;
-        }
-
-        button {
-            padding: 10px 20px;
-            background: #007bff;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-        }
-
-        button:hover {
-            background: #0056b3;
+        .ai-message code {
+            background-color: #f3f4f6;
+            padding: 2px 4px;
+            border-radius: 4px;
         }
 
     </style>
 </head>
-<body>
-    <div class="chat-container">
-        <h2>FBref Chatbot</h2>
-        
-        <div class="chat-box" id="chat-box">
-            {% for message in chat_history %}
-                {% if message.type == 'human' %}
-                    <div class="message user">
-                        <div class="sender">You:</div>
-                        <div class="content">{{ message.content }}</div>
-                    </div>
-                {% elif message.type == 'ai' %}
-                    <div class="message bot">
-                        <div class="sender">Bot:</div>
-                        <div class="content">{{ message.content }}</div>
-                    </div>
-                {% endif %}
-            {% endfor %}
-        </div>
 
-        <form method="POST" action="/ask">
-            <input type="text" name="question" placeholder="Ask a question..." required autofocus>
-            <button type="submit">Send</button>
+<!-- chat box container -->
+<body class="bg-green-50 flex items-center justify-center min-h-screen p-4">
+    <div class="bg-white rounded-2xl shadow-xl overflow-hidden w-full max-w-2xl md:max-w-3xl lg:max-w-4xl flex flex-col h-[90vh]">
+        <div class="p-4 bg-green-700 text-white shadow-md rounded-t-2xl flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <!-- header for the chatbot -->
+                <h1 class="text-xl font-bold">Fbref Chatbot</h1>
+            </div>
+        <!-- refresh button -->
+        <button id="refresh-button" class="flex items-center gap-2 p-2 rounded-full hover:bg-green-600 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-rotate-cw">
+                <path d="M21 12a9 9 0 1 1-9-9c2.72 0 5.17 1.05 6.94 2.76"/>
+                <path d="M21 3v9h-9"/>
+            </svg>
+        </button>  
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bot"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 11h.01"/><path d="M9 11h.01"/></svg>
+        </div>
+        
+        <!-- chat messages container -->
+        <div id="chat-messages" class="chat-messages-container flex-1 overflow-y-auto p-6 space-y-4">
+            <div class="flex items-start gap-4">
+                <div class="w-10 h-10 rounded-full bg-green-200 flex items-center justify-center font-bold text-green-800 flex-shrink-0">AI</div>
+                <div class="bg-gray-100 text-gray-800 p-3 rounded-xl max-w-xs md:max-w-sm lg:max-w-md">
+                    <!-- placeholder message for user to see when page is loaded -->
+                    <p>Hello! I'm an fbref AI chatbot. How can I help you today?</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- form for user to put message and call /chat flask route-->
+        <form id="chat-form" class="p-4 bg-gray-50 border-t border-gray-200 rounded-b-2xl flex gap-2 items-center">
+            <!-- box for user to type message -->
+            <textarea id="user-input" class="flex-1 resize-none p-3 rounded-xl border border-gray-300 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-600 transition-all" placeholder="Type your message..." rows="1"></textarea>
+            <!-- submit button -->
+            <button type="submit" class="bg-green-600 text-white rounded-full p-3 hover:bg-green-700 transition-colors shadow-lg focus:outline-none focus:ring-2 focus:ring-green-500">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-send-horizontal"><path d="m3 3 3 9-3 9 19-9Z"/><path d="M6 12h16"/></svg>
+            </button>
         </form>
     </div>
 
     <script>
-        window.onload = function() {
-            var chatBox = document.getElementById("chat-box");
-            chatBox.scrollTop = chatBox.scrollHeight;
-        };
+        // DOM handle to access chat form 
+        const chatForm = document.getElementById('chat-form');
+        // DOM handle to access user input
+        const userInput = document.getElementById('user-input');
+        // DOM handle to access and update chat messages
+        const chatMessages = document.getElementById('chat-messages');
+
+        // Function to fix syntax errors so markdown renders correctly
+        function formatForMarkdown(message) {
+            // insert blank line before lists so marked renders them as lists
+            let formattedMessage = message.replace(/([^\n])(\n\d+\.\s)/g, '$1\n\n$2'); // Numbered lists
+            formattedMessage = formattedMessage.replace(/([^\n])(\n[\*\-]\s)/g, '$1\n\n$2'); // Bulleted lists
+            return formattedMessage;
+        }
+
+        // Function to create a message element
+        function createMessageElement(message, sender) {
+            // creates div to store user message and avatar
+            const messageWrapper = document.createElement('div');
+            // updates div class name to push coontent to the right
+            messageWrapper.className = `flex items-start gap-4 ${sender === 'user' ? 'justify-end' : ''}`;
+            
+            // creates the avatar div to display next to message
+            const avatar = document.createElement('div');
+            // for user
+            avatar.className = `w-10 h-10 rounded-full flex items-center justify-center font-bold flex-shrink-0 ${sender === 'user' ? 'bg-green-600 text-white order-2' : 'bg-green-200 text-green-800'}`;
+            // for AI
+            avatar.textContent = sender === 'user' ? 'You' : 'AI';
+
+            // creates the message bubble
+            const messageBubble = document.createElement('div');
+
+            // shared class properties
+            let bubbleClasses = 'p-3 rounded-xl max-w-xs md:max-w-sm lg:max-w-md';
+            // sets other properties based on user or AI message
+            if (sender === 'user') {
+                bubbleClasses += ' bg-green-600 text-white';
+            } else {
+                bubbleClasses += ' bg-gray-100 text-gray-800 ai-message';
+            }
+
+            // assigns class properties to message bubble
+            messageBubble.className = bubbleClasses;            
+            
+            // formats the message with markdown, converts it back to HTML, and sets the HTML of the bubble
+            messageBubble.innerHTML = marked.parse(formatForMarkdown(message));
+            
+            // adds the avatar and message to the whole message div
+            messageWrapper.appendChild(avatar);
+            messageWrapper.appendChild(messageBubble);
+
+            return messageWrapper;
+        }
+
+        // Add a loading indicator while generating AI response
+        function addLoadingIndicator() {
+            const loadingIndicator = document.createElement('div');
+            loadingIndicator.id = 'loading-indicator';
+            loadingIndicator.className = 'flex items-start gap-4';
+            loadingIndicator.innerHTML = `
+                <div class="w-10 h-10 rounded-full bg-green-200 flex items-center justify-center font-bold text-green-800 flex-shrink-0">AI</div>
+                <div class="bg-gray-100 text-gray-800 p-3 rounded-xl max-w-xs md:max-w-sm lg:max-w-md animate-pulse">
+                    <div class="h-4 bg-gray-300 rounded w-3/4"></div>
+                </div>
+            `;
+            chatMessages.appendChild(loadingIndicator);
+            chatMessages.scrollTop = chatMessages.scrollHeight; // Scroll to the bottom immediatly after adding message
+        }
+
+        // clear chat history and messages when reset button is clicked
+        function clearChat() {
+            // finds the initial welcome message using querySelector
+            const initialMessage = chatMessages.querySelector('.flex.items-start.gap-4');
+            // resets the HTML of all the chat messages
+            chatMessages.innerHTML = '';
+            // adds back the initial message
+            chatMessages.appendChild(initialMessage);
+
+            // Send a request to the server to clear the session history by calling the flask route
+            fetch('/clear_history', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Server response:', data.message);
+            })
+            .catch(error => {
+                console.error('Error clearing chat history:', error);
+            });
+        }
+
+        // Event listener for the refresh button
+        document.getElementById('refresh-button').addEventListener('click', () => {
+            clearChat();
+        });
+
+        // Remove the loading indicator
+        function removeLoadingIndicator() {
+            // finds the loading indicator in the HTML
+            const loadingIndicator = document.getElementById('loading-indicator');
+            if (loadingIndicator) {
+                loadingIndicator.remove();
+            }
+        }
+
+        // Auto-resize the textarea based on content
+        userInput.addEventListener('input', () => {
+            userInput.style.height = 'auto';
+            userInput.style.height = userInput.scrollHeight + 'px';
+        });
+
+        // Event listener for the chat form (when user clicks submit)
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            // trims the message and assigns it
+            const userMessage = userInput.value.trim();
+
+            if (userMessage) {
+                // Add user message to the chat container
+                chatMessages.appendChild(createMessageElement(userMessage, 'user'));
+                // scrolls to the bottom
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                // Clear the input and reset height
+                userInput.value = '';
+                userInput.style.height = 'auto';
+                
+                // Add a loading indicator
+                addLoadingIndicator();
+
+                try {
+                    const response = await fetch('/chat', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ message: userMessage }),
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    
+                    removeLoadingIndicator();
+                    
+                    // Add AI response to the chat
+                    chatMessages.appendChild(createMessageElement(data.reply, 'ai'));
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                } catch (error) {
+                    console.error('Error fetching chat response:', error);
+                    removeLoadingIndicator();
+                    // Display an error message to the user
+                    chatMessages.appendChild(createMessageElement("An error occurred. Please try again.", 'ai'));
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+            }
+        });
     </script>
-    
 </body>
 </html>
