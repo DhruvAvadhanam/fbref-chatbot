@@ -146,7 +146,6 @@ def scrape_fbref_df(stat_type='standard', season='2024-2025', competition='Premi
     options = Options()
     options.add_argument("--headless")
     driver = webdriver.Chrome(options=options)
-    print(url)
     driver.get(url)
     time.sleep(1)
     soup = BeautifulSoup(driver.page_source, 'lxml')
@@ -189,7 +188,7 @@ def scrape_fbref_df(stat_type='standard', season='2024-2025', competition='Premi
     df = pd.DataFrame(players_info)
     return df
 
-df_possession = scrape_fbref_df('possession', '2024-2025', 'La-Liga')
+# df_possession = scrape_fbref_df('possession', '2024-2025', 'La-Liga')
 # print(df_possession)
 # df_possession.to_csv('Prem player_possession_stats.csv', index=False)
 

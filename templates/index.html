@@ -50,6 +50,19 @@
             padding: 2px 4px;
             border-radius: 4px;
         }
+        .loading-dot {
+            animation: dot-blink 1.4s infinite both;
+        }
+        .loading-dot:nth-child(2) {
+            animation-delay: .2s;
+        }
+        .loading-dot:nth-child(3) {
+            animation-delay: .4s;
+        }
+        @keyframes dot-blink {
+            0%, 80%, 100% { opacity: 0.2; }
+            40% { opacity: 1; }
+        }
 
     </style>
 </head>
@@ -107,6 +120,7 @@
             // insert blank line before lists so marked renders them as lists
             let formattedMessage = message.replace(/([^\n])(\n\d+\.\s)/g, '$1\n\n$2'); // Numbered lists
             formattedMessage = formattedMessage.replace(/([^\n])(\n[\*\-]\s)/g, '$1\n\n$2'); // Bulleted lists
+            // returns the corrected message string
             return formattedMessage;
         }
 
@@ -149,19 +163,23 @@
             return messageWrapper;
         }
 
-        // Add a loading indicator while generating AI response
+        // Add a loading indicator while generating AI response - dot animation
         function addLoadingIndicator() {
             const loadingIndicator = document.createElement('div');
             loadingIndicator.id = 'loading-indicator';
             loadingIndicator.className = 'flex items-start gap-4';
             loadingIndicator.innerHTML = `
                 <div class="w-10 h-10 rounded-full bg-green-200 flex items-center justify-center font-bold text-green-800 flex-shrink-0">AI</div>
-                <div class="bg-gray-100 text-gray-800 p-3 rounded-xl max-w-xs md:max-w-sm lg:max-w-md animate-pulse">
-                    <div class="h-4 bg-gray-300 rounded w-3/4"></div>
+                <div class="bg-gray-100 text-gray-800 p-3 rounded-xl max-w-xs md:max-w-sm lg:max-w-md">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-2 h-2 bg-green-500 rounded-full loading-dot"></div>
+                        <div class="w-2 h-2 bg-green-500 rounded-full loading-dot"></div>
+                        <div class="w-2 h-2 bg-green-500 rounded-full loading-dot"></div>
+                    </div>
                 </div>
             `;
             chatMessages.appendChild(loadingIndicator);
-            chatMessages.scrollTop = chatMessages.scrollHeight; // Scroll to the bottom immediatly after adding message
+            chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
         // clear chat history and messages when reset button is clicked
@@ -194,31 +212,121 @@
             clearChat();
         });
 
-        // Remove the loading indicator
+        // Remove the loading indicator once the AI has stopped responding
         function removeLoadingIndicator() {
-            // finds the loading indicator in the HTML
             const loadingIndicator = document.getElementById('loading-indicator');
             if (loadingIndicator) {
                 loadingIndicator.remove();
             }
         }
 
-        // Auto-resize the textarea based on content
+        // Auto-resize the textarea based on content - grows as you type more
         userInput.addEventListener('input', () => {
             userInput.style.height = 'auto';
             userInput.style.height = userInput.scrollHeight + 'px';
         });
 
+        // Function to handle the streaming AI response
+        function handleStreamedResponse(source) {
+            // creates new container for AI message
+            const aiMessageContainer = document.createElement('div');
+            // assigns it class properties
+            aiMessageContainer.className = 'flex items-start gap-4';
+
+            // creates the AI avatar
+            const avatar = document.createElement('div');
+            // sets the avatar class properties
+            avatar.className = 'w-10 h-10 rounded-full bg-green-200 flex items-center justify-center font-bold text-green-800 flex-shrink-0';
+            avatar.textContent = 'AI';
+            aiMessageContainer.appendChild(avatar);
+
+            // adds empty bubble where the AI response streamed tokens will fill
+            const messageBubble = document.createElement('div');
+            // sets the class properties
+            messageBubble.className = 'p-3 rounded-xl max-w-xs md:max-w-sm lg:max-w-md bg-gray-100 text-gray-800 ai-message';
+            aiMessageContainer.appendChild(messageBubble);
+
+            // accumulates AI tokens
+            let fullResponse = '';
+            let streamClosed = false;
+            let pendingRender = false;
+
+            // Function to render the AI response into the message bubble
+            function render() {
+                messageBubble.innerHTML = marked.parse(formatForMarkdown(fullResponse));
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                pendingRender = false;
+            }
+
+            // handles each chunk of the message that is sent from Flask (using EventSource)
+            source.onmessage = function(event) {
+                // The backend now sends a JSON object with type and content.
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'status') {
+                    // For status updates, replace the content of the bubble
+                    fullResponse = data.content;
+                    render(); // Render status updates immediately
+                } else if (data.type === 'token' && data.content) {
+                    // If the bubble is currently showing a status message,
+                    // clear it before streaming the first token of the real answer
+                    if (fullResponse.startsWith('🤖 **Assistant:**')) {
+                        fullResponse = '';
+                    }
+                    
+                    // add it to the full response
+                    fullResponse += data.content;
+                    
+                    // Batch DOM updates for smooth rendering
+                    if (!pendingRender) {
+                        pendingRender = true;
+                        requestAnimationFrame(render);
+                    }
+                }
+            };
+
+            // Listen for custom end-of-stream event in Flask app
+            source.addEventListener('end-of-stream', function(event) {
+                // Perform one final render to catch any remaining text
+                render();
+                console.log("End of stream received, closing connection.");
+                streamClosed = true;
+                source.close();
+            });
+
+            // handles unexpected errors and shows error messages
+            source.onerror = function() {
+                if (streamClosed) {
+                    return; // This was an expected closure, do nothing.
+                }
+                console.error("EventSource failed.");
+                source.close();
+                removeLoadingIndicator();
+                chatMessages.appendChild(createMessageElement("An error occurred. Please try again.", 'ai'));
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            };
+
+            // once streaming starts and source opens (Flask app opens source)
+            source.onopen = function() {
+                console.log("Connection opened.");
+                // removes loading indicator
+                removeLoadingIndicator();
+                // adds the empty AI bubble
+                chatMessages.appendChild(aiMessageContainer);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            };
+        }
+
         // Event listener for the chat form (when user clicks submit)
         chatForm.addEventListener('submit', async (e) => {
+            // prevents reload when user asks question
             e.preventDefault();
-            // trims the message and assigns it
+            // gets the user message in clean string
             const userMessage = userInput.value.trim();
 
             if (userMessage) {
-                // Add user message to the chat container
+                // Add user message to the chat container immediatly
                 chatMessages.appendChild(createMessageElement(userMessage, 'user'));
-                // scrolls to the bottom
                 chatMessages.scrollTop = chatMessages.scrollHeight;
 
                 // Clear the input and reset height
@@ -228,34 +336,10 @@
                 // Add a loading indicator
                 addLoadingIndicator();
 
-                try {
-                    const response = await fetch('/chat', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ message: userMessage }),
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-
-                    const data = await response.json();
-                    
-                    removeLoadingIndicator();
-                    
-                    // Add AI response to the chat
-                    chatMessages.appendChild(createMessageElement(data.reply, 'ai'));
-                    chatMessages.scrollTop = chatMessages.scrollHeight;
-
-                } catch (error) {
-                    console.error('Error fetching chat response:', error);
-                    removeLoadingIndicator();
-                    // Display an error message to the user
-                    chatMessages.appendChild(createMessageElement("An error occurred. Please try again.", 'ai'));
-                    chatMessages.scrollTop = chatMessages.scrollHeight;
-                }
+                // Use EventSource for streaming from /chat route, passing message as a query parameter
+                const source = new EventSource(`/chat?message=${encodeURIComponent(userMessage)}`);
+                // streams response using function defined earlier
+                handleStreamedResponse(source);
             }
         });
     </script>
