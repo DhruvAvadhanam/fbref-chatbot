@@ -73,3 +73,5 @@ yarl==1.20.1
 zstandard==0.23.0
 flask_cors
 lxml
+duckdb
+gunicorn

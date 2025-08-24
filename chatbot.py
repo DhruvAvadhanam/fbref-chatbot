@@ -1,38 +1,66 @@
 from flask import Flask, request, render_template, session, jsonify
 from dotenv import load_dotenv
-import pandas as pd
 import os
+import duckdb
 from langchain.chains import LLMChain
 from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
-from scraping_functions.standardized_scraping_function import scrape_fbref
-from scraping_functions.standardized_scraping_function import scrape_fbref_df
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableWithMessageHistory
-from langchain_core.messages import AIMessage, HumanMessage, messages_to_dict
+from langchain_core.tools import tool
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, messages_to_dict
 from langchain.memory import ChatMessageHistory
 import uuid, json
 from flask import Response, stream_with_context
 
-# function to get the chat history from the session. session_id not used so only looks at single-cookie history
+# function to get messages from the MotherDuck history database based on session_id
 def get_session_history(session_id: str):
-    # Get the list of message dictionaries from the session
-    history_dicts = session.get("history", [])
-    
-    # Rebuild the LangChain message object to use in LLM prompt
-    messages = []
+    """Fetch the last 10 messages from MotherDuck for this session_id"""
+    rows = con.execute(
+        """
+        SELECT role, content
+        FROM chat_history
+        WHERE session_id = ?
+        ORDER BY created_at ASC
+        LIMIT 10
+        """, 
+        [session_id]
+    ).fetchall()
 
-    # gets each AI and human message from each history dictionary (ignores tool calls)
-    for msg_dict in history_dicts:
-        if "data" in msg_dict:
-            content = msg_dict["data"].get("content")
-            if content:
-                if msg_dict.get("type") == "human":
-                    messages.append(HumanMessage(content=content))
-                elif msg_dict.get("type") == "ai":
-                    messages.append(AIMessage(content=content))
-                    
+    messages = []
+    for role, content in rows:
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            messages.append(AIMessage(content=content))
+        elif role == "tool":
+            # if you want tools in context
+            messages.append(ToolMessage(content=content, tool_call_id="tool"))
     return ChatMessageHistory(messages=messages)
+
+# function to save messages to the Motherduck history database
+def save_message(session_id: str, role: str, content: str):
+    """Insert a new message into MotherDuck and prune to last 10."""
+    con.execute(
+        "INSERT INTO chat_history (session_id, role, content) VALUES (?, ?, ?)",
+        [session_id, role, content]
+    )
+
+    # prune to last 10 per session
+    con.execute(
+        """
+        DELETE FROM chat_history
+        WHERE session_id = ?
+          AND created_at NOT IN (
+              SELECT created_at
+              FROM chat_history
+              WHERE session_id = ?
+              ORDER BY created_at DESC
+              LIMIT 10
+          )
+        """,
+        [session_id, session_id]
+    )
 
 # create the flask web app
 app = Flask(__name__)
@@ -42,6 +70,30 @@ load_dotenv()
 
 # creates secret keys to encrypt session data
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "default_secret")
+
+# gets the motherduck token in the .env file
+MOTHERDUCK_TOKEN = os.getenv('MOTHERDUCK_TOKEN')
+DB_NAME = "fbref_soccer_stats"
+# Create the database connection URI
+con = duckdb.connect(f"md:{DB_NAME}?motherduck_token={os.getenv('MOTHERDUCK_TOKEN')}")
+
+
+def get_schema_string():
+    if not con:
+        return "Database connection is not available."
+    try:
+        tables = con.execute("SHOW TABLES").fetchdf()["name"].tolist()
+        schema_info = {}
+        for t in tables:
+            full_name = f"main.{t}"  # ✅ prepend main
+            df = con.execute(f"DESCRIBE {full_name}").fetchdf()
+            schema_info[full_name] = dict(zip(df["column_name"], df["column_type"]))
+        return json.dumps(schema_info, indent=2)
+    except Exception as e:
+        return f"Schema inspection error: {e}"
+
+# Later insert it into your system prompt
+db_schema = get_schema_string()
 
 # Define the prompt template. Contains markdown rules for formatting
 # 3 variable inputs: chat_history, context, question
@@ -85,35 +137,61 @@ prompt = PromptTemplate(
 
 # set up agent - Gemini LLM and Langchain
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+# llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
 # llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
 
 # template for the tool caller LLM that scrapes appropriate data
 # defines rules for calling the scraper function in the correct format
-prompt_scrape = ChatPromptTemplate.from_messages([
-    ("system", """You are a helpful assistant who can scrape soccer data from FBref by calling functions.
+prompt_scrape = ChatPromptTemplate.from_messages(    [
+    ("system", """You are a soccer data assistant with access to a DuckDB database (MotherDuck).
+Your task is to convert user questions into executable SQL queries based on the provided database schema.
+     
+**Database Schema:**
+The database schema is provided below in a JSON format.
+```json
+{db_schema}
 
-**Function Calling Instructions:**
-- The `stat_type` can be one of six categories: standard, keeper, defensive, shooting, passing, possession. Use your judgement to pick the best category.
-- The `competition` name must have dashes instead of spaces (e.g., 'Premier-League').
-- The `season` must be in the format 'XXXX-XXXX' (e.g., '2024-2025'). The current season is 2024-2025.
+Behavior Rules:
+1. Always generate a valid SQL query to answer the user's question using the provided schema.
+   - Use the run_sql tool with the generated query.
+   - Prefer UNION ALL across tables if the question spans multiple leagues or seasons.
+   - Only select necessary columns.
+   - Always use ORDER BY and LIMIT for ranking-type queries (e.g., "most goals").
+2. Do not respond to the user directly. Your job is only to generate the appropriate tool call to get the data.
+3. If a question is about player ratings or subjective opinions, use the stats available to formulate the query.
+4. If no relevant data exists in the schema, respond with a polite message indicating that the data is unavailable.
 
-**Behavioral Instructions:**
-- If the user's request is clear enough to call a tool, call it.
-- If any information required for a tool call (`stat_type`, `competition`, `season`) is missing or ambiguous, ask a specific, conversational follow-up question to clarify. Only ask for what's missing.
-- You can answer subjective questions, but if it requires data you don't have, you should try to call the `scrape_fbref` tool to get it.
-- For questions on specific players, only include information relevant to the player and the question asked in your final answer.
-- Do not repeat information you have already mentioned.
+Tool Call Rules:
+   - Every tool call must include arguments in a JSON object.
+   - For run_sql, always call as: {{"sql_query": "SELECT ...;"}}
+   - Never pass an empty arguments object for run_sql.
 
-**Response Formatting (for direct answers/clarifications):**
-- Use Markdown for all your responses. Use lists, bolding, and new lines to make responses clear and readable."""),
-    # full conversation history will later be inserted here (RunnableWithMessageHistory)
+Instructions:
+- You may call multiple tools sequentially.
+- After tool calls are complete, do not generate a final human-readable answer. 
+    That is a separate step in the chain. Your only output should be the tool call.
+"""),
+    # conversation history
     MessagesPlaceholder(variable_name="messages"),
-    # user question will later be inserted here
+    # user question
     ("user", "{question}")
-])
+]
+)
 
+# tool that takes raw SQL code as parameter and sorts Motherduck database
+@tool
+def run_sql(sql_query: str) -> str:
+    """Run a raw SQL query against the DuckDB database.
+    Must be called with a JSON object: {"sql_query": "SELECT ...;"}
+    """
+    try:
+        df = con.execute(sql_query).fetchdf()
+        return df.to_json(orient="records")
+    except Exception as e:
+        return f"SQL error: {e}"
+    
 # compose a prompt for the LLM | tell it to return structured call response instead of plain string
-chain_scrape = prompt_scrape | llm.bind_tools([scrape_fbref])
+chain_scrape = prompt_scrape | llm.bind_tools([run_sql])
 
 # define the chain for the LLM that gives the final response
 # takes in structured context and JSON data
@@ -134,16 +212,12 @@ chat_with_memory = RunnableWithMessageHistory(
 def home():
     return render_template("index.html")
 
-# route clears the cookie history and current session_id
+# route clears the MotherDuck history database 
 @app.route("/clear_history", methods=["POST"])
 def clear_history():
-    # Remove the 'history' and 'session_id' keys from the session
-    session.pop("history", None)
-    session.pop("session_id", None)
-    
-    # Response to confirm success
-    return jsonify({"message": "Chat history cleared successfully"})
-
+    con.execute("DELETE FROM chat_history")
+    session.pop("session_id", None)  # optional, reset Flask cookie
+    return jsonify({"message": "All chat history cleared successfully"})
 
 @app.route("/chat")
 def chat():
@@ -163,72 +237,73 @@ def chat():
 
         # Get the full history by accessing session_id (ChatMessageHistory Object)
         full_history = get_session_history(session_id)
-        # Add the user's message to the history (not in browser cookie yet)
-        full_history.add_user_message(user_question)
+
+        # Add the user's message to the MotherDuck Database
+        save_message(session_id, "user", user_question)
 
         # The chain returns an AIMessage object - either scraper call or string content
         ai_message = chat_with_memory.invoke(
-            {"question": user_question},
+            {"question": user_question,
+             "db_schema": db_schema,
+             "messages": full_history.messages},
             # internally pupulates MessagePlaceholder in the prompt
             config={"configurable": {"session_id": session_id}}
         )
         print('AI Tool Call: ', ai_message)
 
+        # if the LLM decides to call a tool
+        if ai_message.tool_calls:
+            tool_call = ai_message.tool_calls[0]  # take the first tool call
+            # Get the name and arguments from the tool call
+            tool_name = tool_call["name"] 
+            tool_args = tool_call["args"]
+
+            if tool_name == "run_sql":
+                result_json = run_sql.invoke(tool_args)
+            else:
+                result_json = "Tool returned no data."
+
+            # Add the tool's result to MotherDuck database
+            save_message(session_id, "tool", result_json)
+
+            # Use tool result as context
+            final_context = result_json
+        else:
+            # If no tool call, use AI’s direct response
+            final_context = ai_message.content
+
+        # Yield another status message after scraping and before generation
+        status_message_2 = f'🤖 **Assistant:** *Analyzing data and generating your answer...*'
+        yield f"data: {json.dumps({'type': 'status', 'content': status_message_2})}\n\n"
+
+        # get the full history again with updated messages and tool calls
+        full_history = get_session_history(session_id)
+
+        # Get the full chat history messages. This is then put into the LLM prompt template
+        chat_history_for_llm_chain = [f"{msg.type}: {msg.content}" for msg in full_history.messages]
+        chat_history_string = "\n".join(chat_history_for_llm_chain)
+
         full_response_text = ""
 
-        # Case 1: The model calls scraper
-        if ai_message.tool_calls:
-            # Get the arguments from the tool call
-            tool_call_args = ai_message.tool_calls[0]['args']
-            competition = tool_call_args.get("competition")
-            stat_type = tool_call_args.get("stat_type")
-            season = tool_call_args.get("season")
-
-            # Yield a status message before the tool call
-            status_message_1 = f'🤖 **Assistant:** *Searching records for {competition}...*'
-            yield f"data: {json.dumps({'type': 'status', 'content': status_message_1})}\n\n"
-
-            # Call the scraper with the parameters
-            df = scrape_fbref_df(stat_type=stat_type, season=season, competition=competition)
-            # make the df a json record (context for final chain)
-            context_text = df.to_json(orient='records', indent=2)
-
-            # Yield another status message after scraping and before generation
-            status_message_2 = f'🤖 **Assistant:** *Analyzing data and generating your answer...*'
-            yield f"data: {json.dumps({'type': 'status', 'content': status_message_2})}\n\n"
-
-            # Get the full chat history messages. This is then put into the LLM prompt template
-            chat_history_for_llm_chain = [f"{msg.type}: {msg.content}" for msg in full_history.messages]
-            # make it a formatted string
-            chat_history_string = "\n".join(chat_history_for_llm_chain)
-            print('Chat History: ', chat_history_string)
-
-            # Call the LLM chain to get the final answer. Then stream the answer in incremental chunks of tokens
-            for chunk in llm_chain.stream({"context": context_text, "question": user_question, "chat_history": chat_history_string}):
-                token = chunk["text"]
-                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
-                # accumulate a variable for the full response. This will be saved to message history afterwards
-                full_response_text += token
-        # Case 2: the model responds directly to the user
-        else:
-            # Stream the direct response of the AI tool call
-            for chunk in ai_message.content:
+        # Stream final answer tokens
+        for chunk in llm_chain.stream({
+            "context": final_context,
+            "question": user_question,
+            "chat_history": chat_history_string
+        }):
+            token = chunk.get('text', '')
+            if token:
                 yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
                 full_response_text += token
-
-        # Save the full AI response to history after streaming is complete
-        full_history.add_ai_message(full_response_text)
-        # serialize history into a structure suitable for saving in session
-        serializable_history = messages_to_dict(full_history.messages)
-        # save the history in session
-        session["history"] = serializable_history
+        
+        # Save the full AI response to MotherDuck history database after streaming is complete
+        save_message(session_id, "assistant", full_response_text)
 
         # Signal the end of the stream to the client
         yield "event: end-of-stream\ndata: close\n\n"
          
     # Return Response object, wrapping the generator with stream_with_context
     return Response(stream_with_context(generate_response()), mimetype='text/event-stream')
-
 
 if __name__ == '__main__':
     app.run(debug=True, threaded=True)

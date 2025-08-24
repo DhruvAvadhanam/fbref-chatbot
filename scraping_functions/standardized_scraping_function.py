@@ -2,9 +2,12 @@ from bs4 import BeautifulSoup
 import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import time
 import pandas as pd
+import cloudscraper
 
 # Mapping of league names to their FBref competition ID
 LEAGUE_ID_MAP = {
@@ -81,22 +84,29 @@ STAT_CONFIG = {
     }
 }
 
+def _read_url_content(url: str):
+        scraper = cloudscraper.create_scraper()  # creates a scraper instance
+        response = scraper.get(url)
+        html_content = response.text
+        return html_content
 
 def scrape_fbref(stat_type='standard', season='2024-2025', competition='Premier-League'):
     config = STAT_CONFIG[stat_type]
     competition_id = LEAGUE_ID_MAP.get(competition)
     url = config['url_template'].format(season=season, competition=competition, competition_id=competition_id)
-    print(url)
     div_id = config['div_id']
     columns = config['columns']
 
     options = Options()
     options.add_argument("--headless")
-    driver = webdriver.Chrome(options=options)
-    driver.get(url)
-    time.sleep(1)
-    soup = BeautifulSoup(driver.page_source, 'lxml')
-    driver.quit()
+
+    # driver = webdriver.Chrome(options=options)
+    # driver.get(url)
+    time.sleep(3)
+    html_content = _read_url_content(url)
+    soup = BeautifulSoup(html_content, 'lxml')
+    # soup = BeautifulSoup(driver.page_source, 'lxml')
+    # driver.quit()
 
     # create a list of each column in the dictionary
     players_info = {col: [] for col in columns if col}
@@ -145,11 +155,13 @@ def scrape_fbref_df(stat_type='standard', season='2024-2025', competition='Premi
 
     options = Options()
     options.add_argument("--headless")
-    driver = webdriver.Chrome(options=options)
-    driver.get(url)
-    time.sleep(1)
-    soup = BeautifulSoup(driver.page_source, 'lxml')
-    driver.quit()
+    # driver = webdriver.Chrome(options=options)
+    # driver.get(url)
+    time.sleep(3)
+    html_content = _read_url_content(url)
+    soup = BeautifulSoup(html_content, 'lxml')
+    # soup = BeautifulSoup(driver.page_source, 'lxml')
+    # driver.quit()
 
     # create a list of each column in the dictionary
     players_info = {col: [] for col in columns if col}
@@ -188,9 +200,9 @@ def scrape_fbref_df(stat_type='standard', season='2024-2025', competition='Premi
     df = pd.DataFrame(players_info)
     return df
 
-# df_possession = scrape_fbref_df('possession', '2024-2025', 'La-Liga')
-# print(df_possession)
-# df_possession.to_csv('Prem player_possession_stats.csv', index=False)
+
+df_bundesliga_defense = scrape_fbref_df('defensive', '2024-2025', 'Bundesliga')
+print(df_bundesliga_defense)
 
 
 
